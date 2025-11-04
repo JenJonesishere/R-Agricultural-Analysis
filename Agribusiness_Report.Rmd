@@ -1,0 +1,232 @@
+---
+title: "Analysis of Key Drivers for Agricultural Crop Yield Using R and SQL"
+author: "Jen Jones"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output: 
+  github_document:
+    toc: true 
+---
+## Introduction
+
+My goal for this project is to analyze an agricultural dataset to identify key drivers of crop yield and resource management. This analysis combines my foundational knowledge from an A.S. in Agricultural Business with new technical skills in R and SQL for data analysis.
+
+The dataset contains farm-level information on crop types, farm area, irrigation, resource usage (fertilizer, pesticide, water), and final crop yield. I will be cleaning and analyzing this data to answer key business questions.
+
+## Setup and Data Preparation
+
+First, we must load the necessary R packages. I use **`tidyverse`** for data manipulation (`dplyr`) and visualization (`ggplot2`), **`sqldf`** to demonstrate running SQL queries, and the **`knitr::kable()`** function to create the professionally formatted tables seen throughout this report.
+
+```{r setup, include=FALSE}
+# --- 1. Load Libraries ---
+library(tidyverse) # For data manipulation (dplyr) and visualization (ggplot2)
+library(sqldf)     # For running SQL queries on R data frames
+library(knitr)     # Provides the kable() function for formatting
+library(randomForest) # For the predictive model
+
+# --- 2. Set Global Chunk Options ---
+# This controls the behavior for ALL code chunks in the report
+knitr::opts_chunk$set(
+  eval = TRUE,      # Run all code
+  echo = TRUE,      # Show all code in the final report
+  message = FALSE,  # Hide package startup messages
+  warning = FALSE   # Hide warning messages
+)
+```
+### Data Loading and Cleaning
+
+The raw `.csv` file has column names with special characters (e.g., `Yield(tons)`) that are difficult to work with in R. I will load the data and then use `dplyr::rename` to create clean and consistent column names for analysis.
+
+### Data Cleaning
+```{r clean-data}
+# 1. Read the CSV, telling it not to check names
+agri_data_raw <- read.csv("agriculture_dataset.csv", check.names = FALSE)
+
+# 2. Rename columns to be valid R variable names (no spaces or '()')
+agri_data <- agri_data_raw %>%
+  rename(
+    Farm_Area_acres = `Farm_Area(acres)`,
+    Fertilizer_Used_tons = `Fertilizer_Used(tons)`,
+    Pesticide_Used_kg = `Pesticide_Used(kg)`,
+    Yield_tons = `Yield(tons)`,
+    Water_Usage_m3 = `Water_Usage(cubic meters)`
+  )
+
+# 3. Convert character columns to factors for modeling
+agri_data <- agri_data %>%
+  mutate(across(where(is.character), as.factor))
+
+
+# 4. Display the first 6 rows to confirm successful cleaning
+knitr::kable(head(agri_data), caption = "A Preview of the Cleaned Data")
+```
+
+## Analysis: R for Visualization
+
+To showcase my R skills, I'll use `dplyr` to summarize data and `ggplot2` to visualize it.
+
+### Question 1: Which irrigation type results in the highest average yield?
+
+This is a key question for farm efficiency. Understanding the impact of irrigation on yield can guide decisions on infrastructure investment.
+
+```{r irrigation-analysis, echo=TRUE, eval=TRUE}
+# 1. Summarise data: Calculate mean yield per irrigation type
+yield_by_irrigation <- agri_data %>%
+  group_by(Irrigation_Type) %>%
+  summarise(Average_Yield = mean(Yield_tons, na.rm = TRUE)) %>%
+  arrange(desc(Average_Yield))
+
+# 2. Display the summary table
+knitr::kable(
+  yield_by_irrigation,  
+  caption = "Average Yield by Irrigation Type",
+  digits = 1  # Round to 1 decimal place
+)
+
+# 3. Visualize the findings for easy comparison
+ggplot(yield_by_irrigation, aes(x = reorder(Irrigation_Type, -Average_Yield), y = Average_Yield)) +
+    geom_bar(stat = "identity", fill = "steelblue") +
+    labs(
+      title = "Average Crop Yield by Irrigation Type",
+      x = "Irrigation Type",
+      y = "Average Yield (tons)"
+    ) +
+    theme_minimal()
+```
+
+**Finding:** The chart and table clearly show that **Manual** irrigation is associated with the highest average yield. Conversely, **Flood** irrigation is the least effective method.
+
+## Analysis: SQL for Data Querying
+
+To demonstrate skill in SQL, I will answer our next question using the `sqldf` package. This allows me to query the `agri_data` data frame as if it were a SQL database, showcasing my versatility as an analyst.
+
+### Question 2: What is the average fertilizer and water usage for each crop?
+
+Resource management is critical in agriculture. This query will help identify which crops are the most resource-intensive.
+
+### 1. Write and run the SQL query
+
+```{r sql-query, echo=TRUE, eval=TRUE}
+# This query selects the crop type and calculates the average
+# fertilizer and water usage.
+crop_resource_summary <- sqldf("
+  SELECT
+    Crop_Type,
+    AVG(Fertilizer_Used_tons) AS Avg_Fertilizer,
+    AVG(Water_Usage_m3) AS Avg_Water_Usage
+  FROM
+    agri_data
+  GROUP BY
+    Crop_Type
+  ORDER BY
+    Avg_Fertilizer DESC")
+```
+
+### 2. Print the results from the SQL query
+
+```{r print-sql-results, echo=TRUE, eval=TRUE}
+crop_resource_summary %>%
+  knitr::kable(
+    digits = 2,
+    caption = "Resource Use by Crop Type (from SQL):"
+  )
+```
+
+**Finding:** The resulting table shows the average fertilizer and water use for each crop, sorted by fertilizer consumption. This could be used by farm managers to forecast costs or identify high-resource crops for efficiency improvements.
+
+## Modeling: Identifying Key Drivers of Yield
+
+The final step is to move beyond simple averages and build a model to identify the *strongest statistical drivers* of yield. My process involves starting with a simple model, diagnosing its failures, and pivoting to a more appropriate, powerful model.
+
+### Model 1: Initial Linear Hypothesis
+
+I'll start with a simple linear regression (`lm`) to test if yield is driven by our three most obvious inputs: fertilizer, water, and irrigation.
+
+```{r predictive-model-1, echo=TRUE, eval=TRUE}
+# Model 1: Test only Fertilizer, Water, and Irrigation
+simple_model <- lm(Yield_tons ~ Fertilizer_Used_tons + Water_Usage_m3 + Irrigation_Type, 
+                   data = agri_data)
+
+summary(simple_model)
+```
+
+**Finding 1:** The summary for our first model shows a very low **Adjusted R-squared** (`r round(summary(simple_model)$adj.r.squared, 3)`). This means these three factors alone explain almost **none** of the variation in yield. Furthermore, none of the variables have a statistically significant p-value (all are > 0.05).
+
+**Conclusion:** We can confidently say that fertilizer, water usage, and irrigation type are **not** the primary drivers of yield *when viewed in isolation*.
+
+---
+
+### Model 2: Comprehensive Linear Model & Diagnosis
+
+Since Model 1 failed, my next step is to build a comprehensive model that includes **all** available factors. This will show if a linear model can work at all.
+
+```{r predictive-model-2, echo=TRUE, eval=TRUE}
+# Model 2: A comprehensive model to find the real drivers.
+# The formula `Yield_tons ~ . - Farm_ID` predicts yield using all
+# other columns, while removing the Farm_ID (which is just an identifier).
+comprehensive_model <- lm(Yield_tons ~ . - Farm_ID, data = agri_data)
+
+summary(comprehensive_model)
+```
+
+**Finding 2:** This model is an even **worse fit** than the simple one, which provides a critical diagnostic insight.
+
+* **Adjusted R-squared:** The value is `r round(summary(comprehensive_model)$adj.r.squared, 3)`. A negative R-squared means the model is performing *worse* than simply guessing the average.
+* **Conclusion:** This is a classic sign of **overfitting**. We have too many variables for a small dataset, and the simple, linear `lm` function cannot find a meaningful pattern. This is a key analytical conclusion: **a linear model is the wrong tool for this dataset.**
+
+---
+
+### Model 3: Pivoting to a Random Forest
+
+Based on the failure of our linear models, I pivoted to a **Random Forest**. This is a powerful machine-learning model that is excellent at finding complex, non-linear patterns and is not easily confused by a large number of variables.
+
+```{r predictive-model-3, echo=TRUE, eval=TRUE}
+# Set a seed for reproducibility
+set.seed(42)
+
+# Build the Random Forest model
+# We must remove 'Farm_ID' and tell the model to ignore any rows with NAs
+rf_model <- randomForest(Yield_tons ~ . - Farm_ID, 
+                         data = agri_data,
+                         na.action = na.omit) # Omit rows with NAs to ensure the model runs
+
+# --- 1. Print the Model Summary ---
+# This text output shows the model's R-squared
+print(rf_model)
+
+# --- 2. Create the Importance Plot ---
+# This is a great visual for a quick summary
+varImpPlot(rf_model, main = "Key Drivers of Crop Yield")
+
+# --- 3. Create the kable() Importance Table ---
+# This presents the same data in a professional table,
+# which is easier to read precisely.
+importance_scores <- as.data.frame(importance(rf_model))
+importance_scores$Variable <- rownames(importance_scores)
+
+# Use dplyr to select, arrange, and present the data
+importance_table <- importance_scores %>%
+  select(Variable, IncNodePurity) %>%
+  arrange(desc(IncNodePurity))
+
+# Now, use kable() to make the table
+knitr::kable(
+  importance_table,
+  digits = 2, # Round to 2 decimal places
+  caption = "Ranked Table of Variable Importance (IncNodePurity)"
+)
+
+```
+
+**Finding 3:** The Random Forest model is a success.
+
+* **R-squared:** The model summary shows a **"% Var explained"** (R-squared) of `r round(rf_model$rsq[length(rf_model$rsq)] * 100, 1)`%. This is a vast improvement and shows the model has strong predictive power.
+* **Variable Importance:** The plot and, more clearly, the `kable()` table rank all variables by their importance. We can now definitively see which factors (like `Pesticide_Used_kg`, `Farm_Area_acres`, and `Water_Usage_m3`) are the most important drivers of yield in this dataset.
+
+## Conclusion
+
+This analysis demonstrates a complete workflow for an agricultural data project, moving from data cleaning to visualization, SQL querying, and advanced predictive modeling.
+
+* **Key Insights:** We discovered that `Manual` irrigation correlates with the highest yields and used SQL to identify resource-intensive crops.
+* **Modeling Process:** Our most important finding came from a rigorous modeling process. We first diagnosed that simple linear models were not appropriate for this data. By pivoting to a Random Forest, we successfully built a high-accuracy model and identified the **true, complex drivers of crop yield**, with factors like pesticide use and farm area being the most significant.
+
+This project successfully showcases how to use R (Tidyverse) and SQL to clean, analyze, and derive actionable insights from agricultural data.
