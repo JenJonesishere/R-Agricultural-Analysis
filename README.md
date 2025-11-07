@@ -6,7 +6,7 @@ The link above is the primary, interactive HTML version of this report, hosted o
 
 For browsing directly on GitHub, you can also see the simple Markdown version.
 
-Project Goal
+Project Goal 
 
 The goal of this project was to answer two key questions:
 
